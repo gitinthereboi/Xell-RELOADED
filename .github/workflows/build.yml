@@ -19,8 +19,6 @@ jobs:
         echo /usr/local/xenon/usr/bin >> $GITHUB_PATH
     - name: Configure git safe directory
       run: git config --global --add safe.directory "$(pwd)"
-    - name: Build
-      run: make
     - name: Build (dist)
       run: make dist
     - uses: actions/upload-artifact@v4

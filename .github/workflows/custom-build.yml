@@ -50,7 +50,10 @@ jobs:
         run: sed -i "s/console_set_colors(CONSOLE_COLOR_BLUE,CONSOLE_COLOR_WHITE);/console_set_colors(${{ inputs.background_color }},${{ inputs.foreground_color }});/" source/lv2/main.c
 
       - name: Set ASCII Art
+        id: asciiart
         if: ${{ inputs.ascii_art }}
+        continue-on-error: true
+        shell: bash
         run: |
           # Create a temporary file
           touch /tmp/new_asciiart.h
@@ -58,26 +61,50 @@ jobs:
           # Add the opening of the asciiart definition
           echo 'static char* asciiart =' > /tmp/new_asciiart.h
 
+          # Decode base64 ASCII art to a file
+          echo "${{ inputs.ascii_art }}" | base64 -d > /tmp/ascii_input.txt
+
           # Process each line of the input ASCII art and format it properly
-          echo '${{ inputs.ascii_art }}' | while IFS= read -r line; do
-            # Escape any double quotes in the line
-            escaped_line=$(echo "$line" | sed 's/"/\\"/g')
+          while IFS= read -r line; do
+            # Escape backslashes
+            escaped_line=$(echo "$line" | sed 's/\\/\\\\/g')
+            # Escape any double quotes
+            escaped_line=$(echo "$escaped_line" | sed 's/"/\\"/g')
             # Add the line with proper C string formatting
-            echo '"'"$escaped_line"'\\n"' >> /tmp/new_asciiart.h
-          done
+            echo '"'"$escaped_line"'\n"' >> /tmp/new_asciiart.h
+          done < /tmp/ascii_input.txt
 
           # Add the closing part with VERSION
-          echo '"             Free60.org XeLL - Xenon Linux Loader " VERSION "\\n";' >> /tmp/new_asciiart.h
+          echo '"             Free60.org XeLL - Xenon Linux Loader " VERSION "\n";' >> /tmp/new_asciiart.h
 
           # Add the asciitail part
           echo 'static char* asciitail =' >> /tmp/new_asciiart.h
-          echo '"    Special Corona & Winchester Compatible XeLL version\\n\\n";' >> /tmp/new_asciiart.h
+          echo '"    Special Corona & Winchester Compatible XeLL version\n\n";' >> /tmp/new_asciiart.h
 
           # Ensure CP437 encoding
           iconv -f UTF-8 -t CP437 /tmp/new_asciiart.h > /tmp/new_asciiart_cp437.h || cp /tmp/new_asciiart.h /tmp/new_asciiart_cp437.h
 
           # Replace the original file
           cp /tmp/new_asciiart_cp437.h source/lv2/asciiart.h
+
+      - name: Report invalid ASCII Art
+        if: ${{ inputs.ascii_art && steps.asciiart.outcome == 'failure' }}
+        run: |
+          echo "Invalid base64 detected. Sending error notification to API..."
+          echo "{\"id\":\"${{ inputs.id }}\",\"key\":\"${{ inputs.key }}\",\"filename\":\"error.txt\",\"file\":\"dummy\",\"error\":\"The application has been updated. Please refresh the site to build a custom XeLL.\"}" > /tmp/error_payload.json
+
+          HTTP_CODE=$(curl -s -o /tmp/error_response.txt -w "%{http_code}" \
+            -H "Content-Type: application/json" \
+            -d @/tmp/error_payload.json \
+            https://xell-api.barrenechea.cl/upload)
+
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "Error sending notification (HTTP $HTTP_CODE): $(cat /tmp/error_response.txt)"
+            exit 1
+          else
+            echo "Error notification successfully sent"
+            exit 1
+          fi
 
       - name: Build
         run: make dist

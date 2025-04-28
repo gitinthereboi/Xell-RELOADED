@@ -177,19 +177,26 @@ void fileloop() {
   }
 }
 
-void tftp_loop(ip_addr_t server) {
-  int i = 0;
-  do {
+void tftp_loop() {
+    int i=0;
+    do{
+		if ((filelist[i].filetype == TYPE_UPDXELL || filelist[i].filetype == TYPE_NANDIMAGE) && (xenon_get_console_type() == REV_CORONA_PHISON))
+		{
+			wait_and_cleanup_line();
+			printf("Skipping TFTP %s:%s... MMC Detected!\r", boot_server_name(),filelist[i].filename);
+			i++;
+		}
+		else
+		{
+			wait_and_cleanup_line();
+			printf("Trying TFTP %s:%s... \r",boot_server_name(),filelist[i].filename);
+			boot_tftp(boot_server_name(), filelist[i].filename, filelist[i].filetype);
+			i++;
+		}
+		network_poll();
+	} while(strcmp(filelist[i].filename, " "));
     wait_and_cleanup_line();
-    printf("Trying TFTP %s:%s... \r", ipaddr_ntoa(&server),
-           filelist[i].filename);
-    boot_tftp(server, filelist[i].filename, filelist[i].filetype);
-    i++;
-    network_poll();
-  } while (filelist[i].filename != NULL);
-
-  wait_and_cleanup_line();
-  printf("Trying TFTP %s:%s...\r", ipaddr_ntoa(&server), boot_file_name());
-  /* Assume that bootfile delivered via DHCP is an ELF */
-  boot_tftp(server, boot_file_name(), TYPE_ELF);
+    printf("Trying TFTP %s:%s...\r",boot_server_name(),boot_file_name());
+    /* Assume that bootfile delivered via DHCP is an ELF */
+    boot_tftp(boot_server_name(),boot_file_name(),TYPE_ELF);
 }

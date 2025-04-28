@@ -7,9 +7,6 @@ on:
       id:
         description: "Build ID"
         required: true
-      key:
-        description: "File Upload Key"
-        required: true
       background_color:
         description: "Background Color"
         required: true

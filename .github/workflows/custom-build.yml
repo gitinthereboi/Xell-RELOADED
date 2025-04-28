@@ -4,9 +4,6 @@ run-name: Custom Build (${{ inputs.id }})
 on:
   workflow_dispatch:
     inputs:
-      id:
-        description: "Build ID"
-        required: true
       background_color:
         description: "Background Color"
         required: true

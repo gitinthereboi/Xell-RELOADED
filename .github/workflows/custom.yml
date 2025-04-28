@@ -1,0 +1,144 @@
+name: Custom Build
+run-name: Custom Build (${{ inputs.id }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      id:
+        description: "Build ID"
+        required: true
+      key:
+        description: "File Upload Key"
+        required: true
+      background_color:
+        description: "Background Color"
+        required: true
+        default: "0xD8444E00"
+      foreground_color:
+        description: "Foreground Color"
+        required: true
+        default: "0xFFFFFF00"
+      ascii_art:
+        description: "ASCII Art"
+        required: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: ghcr.io/barrenechea/libxenon:latest
+    if: github.actor == 'barrenechea'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install curl
+        run: apt-get -qq update && apt-get install -qq curl
+
+      - name: Export variables
+        run: |
+          echo DEVKITXENON=/usr/local/xenon >> $GITHUB_ENV
+          echo /usr/local/xenon/bin >> $GITHUB_PATH
+          echo /usr/local/xenon/usr/bin >> $GITHUB_PATH
+
+      - name: Configure git safe directory
+        run: git config --global --add safe.directory "$(pwd)"
+
+      - name: Set Colors
+        run: sed -i "s/console_set_colors(CONSOLE_COLOR_BLUE,CONSOLE_COLOR_WHITE);/console_set_colors(${{ inputs.background_color }},${{ inputs.foreground_color }});/" source/lv2/main.c
+
+      - name: Set ASCII Art
+        id: asciiart
+        if: ${{ inputs.ascii_art }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          # Create a temporary file
+          touch /tmp/new_asciiart.h
+
+          # Add the opening of the asciiart definition
+          echo 'static char* asciiart =' > /tmp/new_asciiart.h
+
+          # Decode base64 ASCII art to a file
+          echo "${{ inputs.ascii_art }}" | base64 -d > /tmp/ascii_input.txt
+
+          # Process each line of the input ASCII art and format it properly
+          while IFS= read -r line; do
+            # Escape backslashes
+            escaped_line=$(echo "$line" | sed 's/\\/\\\\/g')
+            # Escape any double quotes
+            escaped_line=$(echo "$escaped_line" | sed 's/"/\\"/g')
+            # Add the line with proper C string formatting
+            echo '"'"$escaped_line"'\n"' >> /tmp/new_asciiart.h
+          done < /tmp/ascii_input.txt
+
+          # Add the closing part with VERSION
+          echo '"             Free60.org XeLL - Xenon Linux Loader " VERSION "\n";' >> /tmp/new_asciiart.h
+
+          # Add the asciitail part
+          echo 'static char* asciitail =' >> /tmp/new_asciiart.h
+          echo '"    Special Corona & Winchester Compatible XeLL version\n\n";' >> /tmp/new_asciiart.h
+
+          # Ensure CP437 encoding
+          iconv -f UTF-8 -t CP437 /tmp/new_asciiart.h > /tmp/new_asciiart_cp437.h || cp /tmp/new_asciiart.h /tmp/new_asciiart_cp437.h
+
+          # Replace the original file
+          cp /tmp/new_asciiart_cp437.h source/lv2/asciiart.h
+
+      - name: Report invalid ASCII Art
+        if: ${{ inputs.ascii_art && steps.asciiart.outcome == 'failure' }}
+        run: |
+          echo "Invalid base64 detected. Sending error notification to API..."
+          echo "{\"id\":\"${{ inputs.id }}\",\"key\":\"${{ inputs.key }}\",\"filename\":\"error.txt\",\"file\":\"dummy\",\"error\":\"The application has been updated. Please refresh the site to build a custom XeLL.\"}" > /tmp/error_payload.json
+
+          HTTP_CODE=$(curl -s -o /tmp/error_response.txt -w "%{http_code}" \
+            -H "Content-Type: application/json" \
+            -d @/tmp/error_payload.json \
+            https://xell-api.barrenechea.cl/upload)
+
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "Error sending notification (HTTP $HTTP_CODE): $(cat /tmp/error_response.txt)"
+            exit 1
+          else
+            echo "Error notification successfully sent"
+            exit 1
+          fi
+
+      - name: Build
+        run: make dist
+
+      - name: Upload to API
+        run: |
+          TAR_FILE=$(find . -name "XeLL_Reloaded-2stages-*.tar.gz")
+          if [ -z "$TAR_FILE" ]; then
+            echo "Error: No tar.gz file found"
+            exit 1
+          fi
+
+          FILENAME=$(basename "$TAR_FILE")
+          echo "Found file: $FILENAME"
+
+          echo "Encoding file..."
+          FILE_CONTENT=$(base64 -w 0 "$TAR_FILE")
+
+          echo "Preparing payload..."
+          echo "{\"id\":\"${{ inputs.id }}\",\"key\":\"${{ inputs.key }}\",\"filename\":\"$FILENAME\",\"file\":\"" > /tmp/payload_part1.json
+          base64 -w 0 "$TAR_FILE" > /tmp/payload_part2.base64
+          echo "\"}" > /tmp/payload_part3.json
+
+          cat /tmp/payload_part1.json /tmp/payload_part2.base64 /tmp/payload_part3.json > /tmp/payload.json
+
+          echo "Uploading to API..."
+          HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
+            -H "Content-Type: application/json" \
+            -d @/tmp/payload.json \
+            https://xell-api.barrenechea.cl/upload)
+
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "Error uploading file (HTTP $HTTP_CODE): $(cat /tmp/response.txt)"
+            exit 1
+          else
+            echo "File successfully uploaded"
+          fi
